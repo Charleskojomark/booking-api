@@ -195,6 +195,7 @@ def test_endpoints_without_api_key_return_401(
         ("POST", "/reset", {"slots": []}),
         ("GET", "/slots", None),
         ("POST", "/bookings", {"slot_id": "s1", "name": "Ada", "email": "a@b.com"}),
+        ("GET", "/bookings", None),
         ("GET", "/bookings/bk_test", None),
         ("DELETE", "/bookings/bk_test", None),
     ]
@@ -459,3 +460,214 @@ def test_concurrent_cancels_gives_one_200_and_rest_409(base_url: str) -> None:
 
     assert status_codes.count(200) == 1
     assert status_codes.count(409) == 7
+
+
+def test_idempotent_booking_replay_returns_same_response(client: httpx.Client) -> None:
+    reset(client)
+    idem_key = "idem_" + uuid.uuid4().hex
+    payload = {"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"}
+
+    # First request -> 201
+    res1 = client.post("/bookings", json=payload, headers={"Idempotency-Key": idem_key})
+    assert res1.status_code == 201
+    booking1 = res1.json()
+
+    # Replay request with same key and body -> 201 with identical content
+    res2 = client.post("/bookings", json=payload, headers={"Idempotency-Key": idem_key})
+    assert res2.status_code == 201
+    booking2 = res2.json()
+
+    assert booking1 == booking2
+    assert booking1["id"] == booking2["id"]
+
+    # Verify only 1 booking was created
+    slots_res = client.get("/slots")
+    slots = {s["id"]: s for s in slots_res.json()["slots"]}
+    assert slots["s1"]["available"] is False
+
+
+def test_idempotent_booking_different_body_returns_422(client: httpx.Client) -> None:
+    reset(client)
+    idem_key = "idem_" + uuid.uuid4().hex
+
+    res1 = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+        headers={"Idempotency-Key": idem_key},
+    )
+    assert res1.status_code == 201
+
+    # Same key with different body -> 422
+    res2 = client.post(
+        "/bookings",
+        json={"slot_id": "s2", "name": "Ada Obi", "email": "ada@example.com"},
+        headers={"Idempotency-Key": idem_key},
+    )
+    assert res2.status_code == 422
+    assert res2.json() == {"error": "idempotency key mismatch"}
+
+
+def test_idempotent_booking_retry_after_failure_succeeds(client: httpx.Client) -> None:
+    reset(client)
+    idem_key = "idem_" + uuid.uuid4().hex
+
+    # Attempt booking nonexistent slot -> 404 (failed, so not stored)
+    res1 = client.post(
+        "/bookings",
+        json={"slot_id": "nonexistent", "name": "Ada Obi", "email": "ada@example.com"},
+        headers={"Idempotency-Key": idem_key},
+    )
+    assert res1.status_code == 404
+
+    # Retry with same key for valid slot -> succeeds with 201
+    res2 = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+        headers={"Idempotency-Key": idem_key},
+    )
+    assert res2.status_code == 201
+    assert res2.json()["slot_id"] == "s1"
+
+
+def test_concurrent_idempotent_requests_produce_one_booking_and_identical_responses(
+    base_url: str,
+) -> None:
+    with httpx.Client(
+        base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+    ) as client:
+        reset(client)
+
+    idem_key = "idem_concurrent_" + uuid.uuid4().hex
+    payload = {"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"}
+
+    def attempt_idempotent_booking() -> tuple[int, dict]:
+        with httpx.Client(
+            base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+        ) as c:
+            res = c.post(
+                "/bookings", json=payload, headers={"Idempotency-Key": idem_key}
+            )
+            return res.status_code, res.json()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(attempt_idempotent_booking) for _ in range(4)]
+        results = [f.result() for f in futures]
+
+    status_codes = [r[0] for r in results]
+    response_bodies = [r[1] for r in results]
+
+    # All 4 requests should return 201
+    assert all(code == 201 for code in status_codes)
+    # All 4 bodies should be identical
+    first_body = response_bodies[0]
+    assert all(body == first_body for body in response_bodies)
+
+
+def test_get_bookings_missing_email_or_invalid_limit_returns_400(
+    client: httpx.Client,
+) -> None:
+    reset(client)
+
+    # Missing email
+    res1 = client.get("/bookings")
+    assert res1.status_code == 400
+    assert "error" in res1.json()
+
+    # Empty email
+    res2 = client.get("/bookings?email=")
+    assert res2.status_code == 400
+    assert "error" in res2.json()
+
+    # Limit < 1
+    res3 = client.get("/bookings?email=ada@example.com&limit=0")
+    assert res3.status_code == 400
+    assert "error" in res3.json()
+
+    # Limit > 50
+    res4 = client.get("/bookings?email=ada@example.com&limit=51")
+    assert res4.status_code == 400
+    assert "error" in res4.json()
+
+    # Non-integer limit
+    res5 = client.get("/bookings?email=ada@example.com&limit=abc")
+    assert res5.status_code == 400
+    assert "error" in res5.json()
+
+    # Malformed cursor
+    res6 = client.get("/bookings?email=ada@example.com&cursor=invalid_base64_!!")
+    assert res6.status_code == 400
+    assert "error" in res6.json()
+
+
+def test_get_bookings_cursor_pagination_oldest_first_and_includes_cancelled(
+    client: httpx.Client,
+) -> None:
+    four_slots = [
+        {
+            "id": "s1",
+            "provider": "Dr Ade",
+            "start": "2026-12-10T09:00:00Z",
+            "end": "2026-12-10T09:30:00Z",
+        },
+        {
+            "id": "s2",
+            "provider": "Dr Ade",
+            "start": "2026-12-10T09:30:00Z",
+            "end": "2026-12-10T10:00:00Z",
+        },
+        {
+            "id": "s3",
+            "provider": "Dr Bello",
+            "start": "2026-12-10T10:00:00Z",
+            "end": "2026-12-10T10:30:00Z",
+        },
+        {
+            "id": "s4",
+            "provider": "Dr Bello",
+            "start": "2026-12-10T11:00:00Z",
+            "end": "2026-12-10T11:30:00Z",
+        },
+    ]
+    reset(client, slots=four_slots)
+    email = "ada@example.com"
+
+    # Create 4 bookings for Ada (staying within 5 per email for Level 5 rate limit compatibility)
+    b1 = client.post(
+        "/bookings", json={"slot_id": "s1", "name": "Ada Obi", "email": email}
+    ).json()
+    b2 = client.post(
+        "/bookings", json={"slot_id": "s2", "name": "Ada Obi", "email": email}
+    ).json()
+    b3 = client.post(
+        "/bookings", json={"slot_id": "s3", "name": "Ada Obi", "email": email}
+    ).json()
+    b4 = client.post(
+        "/bookings", json={"slot_id": "s4", "name": "Ada Obi", "email": email}
+    ).json()
+
+    # Cancel b2
+    cancel_res = client.delete(f"/bookings/{b2['id']}")
+    assert cancel_res.status_code == 200
+
+    # Page 1: limit 2, email case-insensitive match
+    p1_res = client.get("/bookings?email=ADA@EXAMPLE.COM&limit=2")
+    assert p1_res.status_code == 200
+    p1 = p1_res.json()
+    assert len(p1["bookings"]) == 2
+    assert p1["bookings"][0]["id"] == b1["id"]
+    assert p1["bookings"][0]["status"] == "confirmed"
+    assert p1["bookings"][1]["id"] == b2["id"]
+    assert p1["bookings"][1]["status"] == "cancelled"
+    cursor = p1["next_cursor"]
+    assert cursor is not None
+    assert isinstance(cursor, str)
+
+    # Page 2: fetch next page with cursor
+    p2_res = client.get(f"/bookings?email={email}&limit=2&cursor={cursor}")
+    assert p2_res.status_code == 200
+    p2 = p2_res.json()
+    assert len(p2["bookings"]) == 2
+    assert p2["bookings"][0]["id"] == b3["id"]
+    assert p2["bookings"][1]["id"] == b4["id"]
+    # The last page has exactly 2 items, matching the limit, and must return next_cursor: null
+    assert p2["next_cursor"] is None
