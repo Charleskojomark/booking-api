@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Slot {
   id: string;
@@ -40,6 +40,7 @@ export default function HomePage() {
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
 
   // Lookup state
+  const [lookupMode, setLookupMode] = useState<"email" | "id">("email");
   const [lookupEmail, setLookupEmail] = useState("");
   const [userBookings, setUserBookings] = useState<Booking[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export default function HomePage() {
   const [bookingIdSearch, setBookingIdSearch] = useState("");
   const [singleBooking, setSingleBooking] = useState<Booking | null>(null);
   const [singleBookingError, setSingleBookingError] = useState<string | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchSlots();
@@ -168,6 +170,8 @@ export default function HomePage() {
     if (!lookupEmail) return;
     setLookupLoading(true);
     setLookupError(null);
+    setSingleBooking(null);
+    setSingleBookingError(null);
     try {
       const params = new URLSearchParams();
       params.set("email", lookupEmail.trim().toLowerCase());
@@ -188,6 +192,9 @@ export default function HomePage() {
         setUserBookings(data.bookings || []);
       }
       setNextCursor(data.next_cursor || null);
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
     } catch (err: any) {
       setLookupError(err.message);
     } finally {
@@ -195,11 +202,13 @@ export default function HomePage() {
     }
   }
 
-  async function handleLookupById(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleLookupById(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     if (!bookingIdSearch.trim()) return;
     setSingleBooking(null);
     setSingleBookingError(null);
+    setUserBookings([]);
+    setLookupError(null);
 
     try {
       const res = await fetch(`/api/bookings/${bookingIdSearch.trim()}`);
@@ -208,6 +217,9 @@ export default function HomePage() {
         throw new Error(data?.error || "Booking not found");
       }
       setSingleBooking(data.booking);
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
     } catch (err: any) {
       setSingleBookingError(err.message);
     }
@@ -629,205 +641,273 @@ export default function HomePage() {
 
         {/* Tab 2: My Appointments */}
         {activeTab === "lookup" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Search by Email */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+          <div className="space-y-4">
+            {/* Unified Compact Search Card */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div>
                   <h2 className="text-sm font-semibold text-slate-900">
-                    Search by Email
+                    Find Appointments
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Find all appointments booked under your email
+                    Look up appointments by patient email or booking ID
                   </p>
                 </div>
 
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    value={lookupEmail}
-                    onChange={(e) => setLookupEmail(e.target.value)}
-                    placeholder="Enter email address"
-                    className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-slate-900"
-                  />
+                {/* Mode Selector */}
+                <div className="flex gap-1 bg-slate-100 p-0.5 rounded-lg text-xs self-start sm:self-auto">
                   <button
-                    onClick={() => handleLookupByEmail()}
-                    disabled={lookupLoading || !lookupEmail.trim()}
-                    className="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs px-3.5 py-1.5 rounded-lg transition-colors"
-                  >
-                    {lookupLoading ? "Searching..." : "Search"}
-                  </button>
-                </div>
-
-                {lookupError && (
-                  <div className="p-2.5 bg-red-50 text-red-700 border border-red-200 rounded text-xs">
-                    {lookupError}
-                  </div>
-                )}
-              </div>
-
-              {/* Search by Booking ID */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-900">
-                    Search by Booking ID
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Look up a single booking reference
-                  </p>
-                </div>
-
-                <form onSubmit={handleLookupById} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={bookingIdSearch}
-                    onChange={(e) => setBookingIdSearch(e.target.value)}
-                    placeholder="e.g. bk_123456"
-                    className="flex-1 px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg font-mono focus:outline-slate-900"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!bookingIdSearch.trim()}
-                    className="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs px-3.5 py-1.5 rounded-lg transition-colors"
-                  >
-                    Find
-                  </button>
-                </form>
-
-                {singleBookingError && (
-                  <div className="p-2.5 bg-red-50 text-red-700 border border-red-200 rounded text-xs">
-                    {singleBookingError}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Single Booking Result */}
-            {singleBooking && (
-              <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold text-sm text-slate-900">
-                    Booking Found
-                  </div>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded capitalize ${
-                      singleBooking.status === "confirmed"
-                        ? "bg-emerald-100 text-emerald-800"
-                        : "bg-red-100 text-red-800"
+                    type="button"
+                    onClick={() => {
+                      setLookupMode("email");
+                      setLookupError(null);
+                      setSingleBookingError(null);
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                      lookupMode === "email"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    {singleBooking.status}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs bg-slate-50 p-3 rounded-lg">
-                  <div>
-                    <span className="text-slate-500 block">ID:</span>
-                    <span className="font-mono font-medium text-slate-800">
-                      {singleBooking.id}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Slot ID:</span>
-                    <span className="font-mono text-slate-800">
-                      {singleBooking.slot_id}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Patient:</span>
-                    <span className="text-slate-800">{singleBooking.name}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Email:</span>
-                    <span className="text-slate-800">{singleBooking.email}</span>
-                  </div>
-                </div>
-
-                {singleBooking.status === "confirmed" && (
-                  <button
-                    onClick={() => handleCancelBooking(singleBooking.id)}
-                    className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs px-3 py-1.5 rounded transition-colors"
-                  >
-                    Cancel Booking
+                    By Email
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLookupMode("id");
+                      setLookupError(null);
+                      setSingleBookingError(null);
+                    }}
+                    className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                      lookupMode === "id"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    By Booking ID
+                  </button>
+                </div>
               </div>
-            )}
 
-            {/* Bookings List Result */}
-            {userBookings.length > 0 && (
-              <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm text-slate-900">
-                    Bookings for {lookupEmail}
-                  </h3>
-                  <span className="text-xs text-slate-500">
-                    {userBookings.length} booking(s)
-                  </span>
+              {/* Search Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (lookupMode === "email") {
+                    handleLookupByEmail();
+                  } else {
+                    handleLookupById();
+                  }
+                }}
+                className="flex gap-2"
+              >
+                <input
+                  type={lookupMode === "email" ? "email" : "text"}
+                  value={lookupMode === "email" ? lookupEmail : bookingIdSearch}
+                  onChange={(e) => {
+                    if (lookupMode === "email") {
+                      setLookupEmail(e.target.value);
+                    } else {
+                      setBookingIdSearch(e.target.value);
+                    }
+                  }}
+                  placeholder={
+                    lookupMode === "email"
+                      ? "Enter patient email (e.g. ada@example.com)"
+                      : "Enter booking reference (e.g. bk_123456)"
+                  }
+                  className="flex-1 px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-slate-900"
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    lookupLoading ||
+                    (lookupMode === "email"
+                      ? !lookupEmail.trim()
+                      : !bookingIdSearch.trim())
+                  }
+                  className="bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs px-4 py-2 rounded-lg font-medium transition-colors shrink-0"
+                >
+                  {lookupLoading ? "Searching..." : "Search"}
+                </button>
+              </form>
+
+              {(lookupError || singleBookingError) && (
+                <div className="p-2.5 bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs">
+                  {lookupError || singleBookingError}
                 </div>
+              )}
+            </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-slate-400 font-medium">
-                        <th className="py-2 px-2">ID</th>
-                        <th className="py-2 px-2">Slot</th>
-                        <th className="py-2 px-2">Patient</th>
-                        <th className="py-2 px-2">Status</th>
-                        <th className="py-2 px-2 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {userBookings.map((b) => (
-                        <tr key={b.id}>
-                          <td className="py-2.5 px-2 font-mono text-slate-900">
-                            {b.id}
-                          </td>
-                          <td className="py-2.5 px-2 font-mono text-slate-600">
-                            {b.slot_id}
-                          </td>
-                          <td className="py-2.5 px-2 text-slate-800">{b.name}</td>
-                          <td className="py-2.5 px-2">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[11px] capitalize ${
-                                b.status === "confirmed"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-red-100 text-red-800"
-                              }`}
-                            >
-                              {b.status}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-2 text-right">
-                            {b.status === "confirmed" ? (
-                              <button
-                                onClick={() => handleCancelBooking(b.id)}
-                                className="text-xs bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            ) : (
-                              <span className="text-slate-400">Cancelled</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {nextCursor && (
-                  <div className="text-center pt-2">
-                    <button
-                      onClick={() => handleLookupByEmail(nextCursor)}
-                      disabled={lookupLoading}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-1.5 rounded text-xs font-medium transition-colors"
+            {/* Results Section (Scroll target) */}
+            <div ref={resultsRef} className="space-y-4">
+              {/* Single Booking Result */}
+              {singleBooking && (
+                <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-sm text-slate-900">
+                      Booking Found
+                    </div>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded capitalize ${
+                        singleBooking.status === "confirmed"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
                     >
-                      {lookupLoading ? "Loading..." : "Load More"}
-                    </button>
+                      {singleBooking.status}
+                    </span>
                   </div>
-                )}
-              </div>
-            )}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs bg-slate-50 p-3 rounded-lg">
+                    <div>
+                      <span className="text-slate-500 block">ID:</span>
+                      <span className="font-mono font-medium text-slate-800">
+                        {singleBooking.id}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Slot ID:</span>
+                      <span className="font-mono text-slate-800">
+                        {singleBooking.slot_id}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Patient:</span>
+                      <span className="text-slate-800">{singleBooking.name}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Email:</span>
+                      <span className="text-slate-800">{singleBooking.email}</span>
+                    </div>
+                  </div>
+
+                  {singleBooking.status === "confirmed" && (
+                    <button
+                      onClick={() => handleCancelBooking(singleBooking.id)}
+                      className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs px-3 py-1.5 rounded transition-colors"
+                    >
+                      Cancel Booking
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Bookings List Result */}
+              {userBookings.length > 0 && (
+                <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm text-slate-900">
+                      Bookings for {lookupEmail}
+                    </h3>
+                    <span className="text-xs text-slate-500">
+                      {userBookings.length} booking(s)
+                    </span>
+                  </div>
+
+                  {/* Mobile Cards (sm:hidden) */}
+                  <div className="sm:hidden space-y-2.5">
+                    {userBookings.map((b) => (
+                      <div
+                        key={b.id}
+                        className="p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs space-y-1.5"
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="font-mono font-medium text-slate-900">
+                            {b.id}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] capitalize font-medium ${
+                              b.status === "confirmed"
+                                ? "bg-emerald-100 text-emerald-800"
+                                : "bg-red-100 text-red-800"
+                            }`}
+                          >
+                            {b.status}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-slate-600 text-[11px]">
+                          <span>Slot: {b.slot_id}</span>
+                          <span>{b.name}</span>
+                        </div>
+                        {b.status === "confirmed" && (
+                          <div className="pt-1">
+                            <button
+                              onClick={() => handleCancelBooking(b.id)}
+                              className="w-full text-xs bg-red-50 hover:bg-red-100 text-red-700 py-1.5 rounded border border-red-100 font-medium transition-colors"
+                            >
+                              Cancel Booking
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Tablet/Desktop Table (hidden sm:block) */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-slate-400 font-medium">
+                          <th className="py-2 px-2">ID</th>
+                          <th className="py-2 px-2">Slot</th>
+                          <th className="py-2 px-2">Patient</th>
+                          <th className="py-2 px-2">Status</th>
+                          <th className="py-2 px-2 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {userBookings.map((b) => (
+                          <tr key={b.id}>
+                            <td className="py-2.5 px-2 font-mono text-slate-900">
+                              {b.id}
+                            </td>
+                            <td className="py-2.5 px-2 font-mono text-slate-600">
+                              {b.slot_id}
+                            </td>
+                            <td className="py-2.5 px-2 text-slate-800">{b.name}</td>
+                            <td className="py-2.5 px-2">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[11px] capitalize ${
+                                  b.status === "confirmed"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-red-100 text-red-800"
+                                }`}
+                              >
+                                {b.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-2 text-right">
+                              {b.status === "confirmed" ? (
+                                <button
+                                  onClick={() => handleCancelBooking(b.id)}
+                                  className="text-xs bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <span className="text-slate-400">Cancelled</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {nextCursor && (
+                    <div className="text-center pt-2">
+                      <button
+                        onClick={() => handleLookupByEmail(nextCursor)}
+                        disabled={lookupLoading}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-1.5 rounded text-xs font-medium transition-colors"
+                      >
+                        {lookupLoading ? "Loading..." : "Load More"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
