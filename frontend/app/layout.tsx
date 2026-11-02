@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Apex Health Clinic • Patient Appointments",
-  description: "Book, view, and manage clinic appointments securely",
+  title: "Clinic Appointments",
+  description: "View available slots, book an appointment, and check confirmation",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">{children}</body>
     </html>
   );
 }
