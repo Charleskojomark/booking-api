@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import re
@@ -284,10 +285,41 @@ def create_booking(request: Request) -> JSONResponse:
     if not EMAIL_REGEX.match(email):
         raise HTTPException(status_code=400, detail="invalid email format")
 
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip() or None
+    canonical_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    request_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
     new_booking = NewBooking(slot_id=slot_id, name=name, email=email)
 
     try:
         with get_connection() as conn, conn.transaction():
+            if idempotency_key:
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))", (idempotency_key,)
+                )
+                row = conn.execute(
+                    """
+                    SELECT request_hash, status_code, response_body
+                    FROM idempotency_keys
+                    WHERE key = %s
+                    """,
+                    (idempotency_key,),
+                ).fetchone()
+                if row:
+                    stored_hash, stored_status, stored_body = row
+                    if stored_hash == request_hash:
+                        resp_content = (
+                            stored_body
+                            if isinstance(stored_body, dict)
+                            else json.loads(stored_body)
+                        )
+                        return JSONResponse(
+                            status_code=stored_status, content=resp_content
+                        )
+                    raise HTTPException(
+                        status_code=422, detail="idempotency key mismatch"
+                    )
+
             slot = conn.execute(
                 "SELECT id, starts_at FROM slots WHERE id = %s", (new_booking.slot_id,)
             ).fetchone()
@@ -319,17 +351,34 @@ def create_booking(request: Request) -> JSONResponse:
                     now_utc,
                 ),
             )
+
+            booking = Booking(
+                id=booking_id,
+                slot_id=new_booking.slot_id,
+                name=new_booking.name,
+                email=new_booking.email,
+                status="confirmed",
+                created_at=created_at_str,
+            )
+
+            if idempotency_key:
+                conn.execute(
+                    """
+                    INSERT INTO idempotency_keys (key, request_hash, status_code, response_body, booking_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        idempotency_key,
+                        request_hash,
+                        201,
+                        json.dumps(booking.model_dump()),
+                        booking_id,
+                        now_utc,
+                    ),
+                )
     except UniqueViolation:
         raise HTTPException(status_code=409, detail="slot already booked")
 
-    booking = Booking(
-        id=booking_id,
-        slot_id=new_booking.slot_id,
-        name=new_booking.name,
-        email=new_booking.email,
-        status="confirmed",
-        created_at=created_at_str,
-    )
     return JSONResponse(status_code=201, content=booking.model_dump())
 
 
