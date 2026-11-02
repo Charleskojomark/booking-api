@@ -16,3 +16,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     cancelled_at TIMESTAMPTZ
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_slot_confirmed
+    ON bookings (slot_id)
+    WHERE status = 'confirmed';
+
+
