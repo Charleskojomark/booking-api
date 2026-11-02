@@ -1,4 +1,6 @@
 import json
+import os
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -112,8 +114,16 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
     return JSONResponse(status_code=500, content={"error": "internal error"})
 
 
+def verify_api_key(request: Request) -> None:
+    expected_key = os.environ.get("API_KEY", "")
+    provided_key = request.headers.get("X-API-Key", "")
+    if not expected_key or not secrets.compare_digest(provided_key, expected_key):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
 @app.post("/reset")
 def reset_database(request: Request) -> dict:
+    verify_api_key(request)
     raw_bytes = anyio.from_thread.run(request.body)
     try:
         body = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else None
@@ -192,7 +202,8 @@ def reset_database(request: Request) -> dict:
 
 
 @app.get("/slots")
-def list_slots(provider: str | None = None) -> dict[str, list[dict]]:
+def list_slots(request: Request, provider: str | None = None) -> dict[str, list[dict]]:
+    verify_api_key(request)
     with get_connection() as conn:
         if provider is not None:
             rows = conn.execute(
@@ -244,6 +255,7 @@ def list_slots(provider: str | None = None) -> dict[str, list[dict]]:
 
 @app.post("/bookings", status_code=201)
 def create_booking(request: Request) -> JSONResponse:
+    verify_api_key(request)
     raw_bytes = anyio.from_thread.run(request.body)
     try:
         body = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else None
@@ -294,7 +306,8 @@ def create_booking(request: Request) -> JSONResponse:
 
 
 @app.get("/bookings/{id}")
-def get_booking(id: str) -> dict:
+def get_booking(id: str, request: Request) -> dict:
+    verify_api_key(request)
     with get_connection() as conn:
         row = conn.execute(
             """
