@@ -20,4 +20,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_slot_confirmed
     ON bookings (slot_id)
     WHERE status = 'confirmed';
 
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY,
+    request_hash TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    response_body JSONB NOT NULL,
+    booking_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookings_email_seq
+    ON bookings (email, seq);
+
+
 
