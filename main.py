@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -7,11 +8,14 @@ from datetime import UTC, datetime
 import anyio.from_thread
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import get_connection
-from schemas import Booking, SlotWithAvailability
+from schemas import Booking, NewBooking, SlotWithAvailability
+
+EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def format_utc(dt: datetime) -> str:
@@ -41,8 +45,6 @@ def parse_iso(val: str) -> datetime:
         dt = dt.astimezone(UTC)
     return dt
 
-
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -278,27 +280,49 @@ def create_booking(request: Request) -> JSONResponse:
     if not slot_id or not name or not email:
         raise HTTPException(status_code=400, detail="fields cannot be empty")
 
+    if not EMAIL_REGEX.match(email):
+        raise HTTPException(status_code=400, detail="invalid email format")
+
+    new_booking = NewBooking(slot_id=slot_id, name=name, email=email)
+
     with get_connection() as conn, conn.transaction():
-        slot = conn.execute("SELECT id FROM slots WHERE id = %s", (slot_id,)).fetchone()
+        slot = conn.execute(
+            "SELECT id, starts_at FROM slots WHERE id = %s", (new_booking.slot_id,)
+        ).fetchone()
         if not slot:
             raise HTTPException(status_code=404, detail="slot not found")
 
-        booking_id = "bk_" + uuid.uuid4().hex[:12]
+        slot_start = slot[1]
+        if slot_start.tzinfo is None:
+            slot_start = slot_start.replace(tzinfo=UTC)
+        else:
+            slot_start = slot_start.astimezone(UTC)
+
         now_utc = datetime.now(UTC)
+        if slot_start <= now_utc:
+            raise HTTPException(status_code=400, detail="slot has already started")
+
+        booking_id = "bk_" + uuid.uuid4().hex[:12]
         created_at_str = format_iso_ms(now_utc)
         conn.execute(
             """
-                INSERT INTO bookings (id, slot_id, name, email, status, created_at)
-                VALUES (%s, %s, %s, %s, 'confirmed', %s)
-                """,
-            (booking_id, slot_id, name, email, now_utc),
+            INSERT INTO bookings (id, slot_id, name, email, status, created_at)
+            VALUES (%s, %s, %s, %s, 'confirmed', %s)
+            """,
+            (
+                booking_id,
+                new_booking.slot_id,
+                new_booking.name,
+                new_booking.email,
+                now_utc,
+            ),
         )
 
     booking = Booking(
         id=booking_id,
-        slot_id=slot_id,
-        name=name,
-        email=email,
+        slot_id=new_booking.slot_id,
+        name=new_booking.name,
+        email=new_booking.email,
         status="confirmed",
         created_at=created_at_str,
     )
