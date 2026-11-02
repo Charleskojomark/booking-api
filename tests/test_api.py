@@ -671,3 +671,95 @@ def test_get_bookings_cursor_pagination_oldest_first_and_includes_cancelled(
     assert p2["bookings"][1]["id"] == b4["id"]
     # The last page has exactly 2 items, matching the limit, and must return next_cursor: null
     assert p2["next_cursor"] is None
+
+
+def test_sixth_attempt_for_email_returns_429_with_retry_after(
+    client: httpx.Client,
+) -> None:
+    six_slots = [
+        {
+            "id": f"slot_{i}",
+            "provider": "Dr Ade",
+            "start": f"2026-12-10T{10 + i:02d}:00:00Z",
+            "end": f"2026-12-10T{10 + i:02d}:30:00Z",
+        }
+        for i in range(6)
+    ]
+    reset(client, slots=six_slots)
+    email = "spam@example.com"
+
+    # Make 5 attempts
+    for i in range(5):
+        res = client.post(
+            "/bookings",
+            json={"slot_id": f"slot_{i}", "name": "Spammer", "email": email},
+        )
+        assert res.status_code == 201
+
+    # 6th attempt returns 429
+    res_6th = client.post(
+        "/bookings",
+        json={"slot_id": "slot_5", "name": "Spammer", "email": email},
+    )
+    assert res_6th.status_code == 429
+    assert res_6th.json() == {"error": "too many requests"}
+    retry_after = res_6th.headers.get("Retry-After")
+    assert retry_after is not None
+    assert int(retry_after) >= 1
+
+    # Another email is unaffected and can book slot_5
+    other_res = client.post(
+        "/bookings",
+        json={"slot_id": "slot_5", "name": "Legit User", "email": "other@example.com"},
+    )
+    assert other_res.status_code == 201
+
+
+def test_failed_attempts_count_toward_rate_limit(client: httpx.Client) -> None:
+    reset(client)
+    email = "failing@example.com"
+
+    # Make 5 failed attempts (slot doesn't exist)
+    for _ in range(5):
+        res = client.post(
+            "/bookings",
+            json={"slot_id": "nonexistent", "name": "Ada", "email": email},
+        )
+        assert res.status_code == 404
+
+    # 6th attempt on a valid slot still returns 429
+    res_6th = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada", "email": email},
+    )
+    assert res_6th.status_code == 429
+    assert res_6th.headers.get("Retry-After") is not None
+
+
+def test_reset_clears_rate_limit_attempts(client: httpx.Client) -> None:
+    reset(client)
+    email = "cleared@example.com"
+
+    # Make 5 failed attempts
+    for _ in range(5):
+        client.post(
+            "/bookings",
+            json={"slot_id": "nonexistent", "name": "Ada", "email": email},
+        )
+
+    # 6th is 429
+    res_limit = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada", "email": email},
+    )
+    assert res_limit.status_code == 429
+
+    # Reset clears rate limit attempts table
+    reset(client)
+
+    # Now the email can book again
+    res_after = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada", "email": email},
+    )
+    assert res_after.status_code == 201
