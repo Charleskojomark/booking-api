@@ -15,3 +15,4 @@ CREATE TABLE IF NOT EXISTS bookings (
     created_at TIMESTAMPTZ NOT NULL,
     cancelled_at TIMESTAMPTZ
 );
+
