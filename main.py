@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -15,7 +16,7 @@ from psycopg.errors import UniqueViolation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import get_connection
-from schemas import Booking, NewBooking, SlotWithAvailability
+from schemas import Booking, BookingsResponse, NewBooking, SlotWithAvailability
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -380,6 +381,90 @@ def create_booking(request: Request) -> JSONResponse:
         raise HTTPException(status_code=409, detail="slot already booked")
 
     return JSONResponse(status_code=201, content=booking.model_dump())
+
+
+@app.get("/bookings")
+def list_bookings(
+    request: Request,
+    email: str | None = None,
+    limit: str | None = "10",
+    cursor: str | None = None,
+) -> dict:
+    verify_api_key(request)
+
+    if email is None or not email.strip():
+        raise HTTPException(status_code=400, detail="missing email parameter")
+
+    clean_email = email.strip().lower()
+
+    try:
+        int_limit = int(limit) if limit is not None else 10
+        if int_limit < 1 or int_limit > 50:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=400, detail="limit must be an integer between 1 and 50"
+        )
+
+    last_seq = None
+    if cursor is not None:
+        try:
+            decoded = base64.urlsafe_b64decode(cursor.encode("utf-8")).decode("utf-8")
+            last_seq = int(decoded)
+        except (ValueError, TypeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid cursor")
+
+    with get_connection() as conn:
+        if last_seq is not None:
+            rows = conn.execute(
+                """
+                SELECT seq, id, slot_id, name, email, status, created_at
+                FROM bookings
+                WHERE LOWER(email) = LOWER(%s) AND seq > %s
+                ORDER BY seq ASC
+                LIMIT %s
+                """,
+                (clean_email, last_seq, int_limit + 1),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT seq, id, slot_id, name, email, status, created_at
+                FROM bookings
+                WHERE LOWER(email) = LOWER(%s)
+                ORDER BY seq ASC
+                LIMIT %s
+                """,
+                (clean_email, int_limit + 1),
+            ).fetchall()
+
+    has_more = len(rows) > int_limit
+    page_rows = rows[:int_limit] if has_more else rows
+
+    bookings = [
+        Booking(
+            id=r[1],
+            slot_id=r[2],
+            name=r[3],
+            email=r[4],
+            status=r[5],
+            created_at=format_iso_ms(r[6]),
+        )
+        for r in page_rows
+    ]
+
+    next_cursor = None
+    if has_more and page_rows:
+        next_seq = page_rows[-1][0]
+        next_cursor = base64.urlsafe_b64encode(str(next_seq).encode("utf-8")).decode(
+            "utf-8"
+        )
+
+    response_data = BookingsResponse(
+        bookings=bookings,
+        next_cursor=next_cursor,
+    )
+    return response_data.model_dump()
 
 
 @app.get("/bookings/{id}")

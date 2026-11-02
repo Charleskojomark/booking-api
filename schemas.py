@@ -38,3 +38,9 @@ class Booking(BaseModel):
     email: str
     status: str
     created_at: str
+
+
+class BookingsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    bookings: list[Booking]
+    next_cursor: str | None
