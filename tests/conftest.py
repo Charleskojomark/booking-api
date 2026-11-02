@@ -23,7 +23,11 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-API_KEY = os.environ.get("API_KEY", "your_api_key_here")
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY = os.environ.get("API_KEY", "")
 
 
 @pytest.fixture(scope="session")
