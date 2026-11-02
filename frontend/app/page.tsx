@@ -42,6 +42,7 @@ export default function HomePage() {
   // Lookup state
   const [lookupMode, setLookupMode] = useState<"email" | "id">("email");
   const [lookupEmail, setLookupEmail] = useState("");
+  const [searchedEmail, setSearchedEmail] = useState<string | null>(null);
   const [userBookings, setUserBookings] = useState<Booking[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -172,9 +173,10 @@ export default function HomePage() {
     setLookupError(null);
     setSingleBooking(null);
     setSingleBookingError(null);
+    const emailToSearch = lookupEmail.trim().toLowerCase();
     try {
       const params = new URLSearchParams();
-      params.set("email", lookupEmail.trim().toLowerCase());
+      params.set("email", emailToSearch);
       params.set("limit", "5");
       if (cursor) {
         params.set("cursor", cursor);
@@ -186,6 +188,7 @@ export default function HomePage() {
         throw new Error(data?.error || "Failed to retrieve bookings");
       }
 
+      setSearchedEmail(emailToSearch);
       if (cursor) {
         setUserBookings((prev) => [...prev, ...(data.bookings || [])]);
       } else {
@@ -209,6 +212,7 @@ export default function HomePage() {
     setSingleBookingError(null);
     setUserBookings([]);
     setLookupError(null);
+    setSearchedEmail(null);
 
     try {
       const res = await fetch(`/api/bookings/${bookingIdSearch.trim()}`);
@@ -662,6 +666,7 @@ export default function HomePage() {
                       setLookupMode("email");
                       setLookupError(null);
                       setSingleBookingError(null);
+                      setSearchedEmail(null);
                     }}
                     className={`px-3 py-1 rounded-md font-medium transition-colors ${
                       lookupMode === "email"
@@ -677,6 +682,7 @@ export default function HomePage() {
                       setLookupMode("id");
                       setLookupError(null);
                       setSingleBookingError(null);
+                      setSearchedEmail(null);
                     }}
                     className={`px-3 py-1 rounded-md font-medium transition-colors ${
                       lookupMode === "id"
@@ -741,6 +747,13 @@ export default function HomePage() {
 
             {/* Results Section (Scroll target) */}
             <div ref={resultsRef} className="space-y-4">
+              {/* Empty state when email lookup returns zero bookings */}
+              {searchedEmail && userBookings.length === 0 && !lookupLoading && !lookupError && (
+                <div className="bg-white p-6 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
+                  No bookings found for <span className="font-semibold text-slate-900">{searchedEmail}</span>.
+                </div>
+              )}
+
               {/* Single Booking Result */}
               {singleBooking && (
                 <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
