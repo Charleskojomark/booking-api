@@ -16,6 +16,7 @@ from psycopg.errors import UniqueViolation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import get_connection
+from rate_limit import check_and_record_rate_limit
 from schemas import Booking, BookingsResponse, NewBooking, SlotWithAvailability
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -266,6 +267,11 @@ def create_booking(request: Request) -> JSONResponse:
         body = json.loads(raw_bytes.decode("utf-8")) if raw_bytes else None
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=400, detail="malformed json")
+
+    if isinstance(body, dict) and isinstance(body.get("email"), str):
+        candidate_email = body["email"].strip().lower()
+        if candidate_email:
+            check_and_record_rate_limit(candidate_email)
 
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
