@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clinic Appointments</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1>Clinic Appointments</h1>
+    </header>
+
+    <main>
+      <section id="slots-section">
+        <h2>Pick a time</h2>
+        <div id="slots-status" class="status-message">Loading slots...</div>
+        <div id="slots-container"></div>
+      </section>
+
+      <section id="booking-section" hidden>
+        <h2>Book appointment</h2>
+        <p id="selected-slot-summary" class="summary-text"></p>
+        <form id="booking-form">
+          <input type="hidden" id="slot-id">
+          
+          <div class="form-group">
+            <label for="patient-name">Name</label>
+            <input type="text" id="patient-name" required autocomplete="name">
+          </div>
+
+          <div class="form-group">
+            <label for="patient-email">Email</label>
+            <input type="email" id="patient-email" required autocomplete="email">
+          </div>
+
+          <button type="submit" id="submit-booking">Book appointment</button>
+          <button type="button" id="cancel-selection" class="button-secondary">Cancel</button>
+        </form>
+        <div id="booking-error" class="error-box" hidden></div>
+      </section>
+
+      <section id="confirmation-section" hidden>
+        <h2>Booking confirmed</h2>
+        <dl class="confirmation-list">
+          <dt>Booking ID</dt>
+          <dd id="conf-id"></dd>
+
+          <dt>Provider</dt>
+          <dd id="conf-provider"></dd>
+
+          <dt>Time</dt>
+          <dd id="conf-time"></dd>
+
+          <dt>Name</dt>
+          <dd id="conf-name"></dd>
+
+          <dt>Email</dt>
+          <dd id="conf-email"></dd>
+
+          <dt>Status</dt>
+          <dd id="conf-status"></dd>
+        </dl>
+        <button type="button" id="book-another">Book another appointment</button>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
