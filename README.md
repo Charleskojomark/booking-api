@@ -71,6 +71,7 @@ Creates a new confirmed booking for a slot.
 - Response 404: `{"error": "slot not found"}`
 - Response 409: `{"error": "slot already booked"}`
 - Response 422: `{"error": "idempotency key mismatch"}` (same key sent with different payload)
+- Response 429: `{"error": "too many requests"}` with `Retry-After` header in whole seconds when an email exceeds 5 attempts per sliding 60-second window.
 
 ### GET /bookings
 Returns that person's bookings, oldest first, using keyset cursor pagination.
@@ -97,6 +98,10 @@ Slot uniqueness is guaranteed in PostgreSQL using a partial unique index on `boo
 
 Idempotency on `POST /bookings` uses a transaction-level advisory lock (`pg_advisory_xact_lock`) on the hash of the key so concurrent requests with the same key serialize safely. The request body is hashed using canonical JSON with sorted keys before trimming. Stored records are created in the same database transaction as the booking so they commit or roll back together, caching only successful 201 responses. Keyset pagination on `GET /bookings` uses the monotonically increasing `seq` identity column with an opaque URL-safe base64 cursor, querying `limit + 1` rows to deterministically compute `next_cursor` even across concurrent booking insertions and cancellations.
 
+## How Level 5 works
+
+Rate limiting runs in its own short database transaction that commits before the booking transaction starts. A transaction-level advisory lock (`pg_advisory_xact_lock`) on the hash of the email serializes concurrent requests per email. Old attempts beyond 60 seconds are purged using the PostgreSQL clock (`NOW() - INTERVAL '60 seconds'`), and the remaining attempts in the sliding window are counted. If 5 or more attempts exist, the request returns `429 Too Many Requests` with a whole-second `Retry-After` header indicating when the oldest attempt leaves the window. Because the rate-limit transaction commits independently, failed attempts still count against the limit, while requests ending in 429 are never recorded.
+
 ## Known limitations
 
-- Level 4 does not yet rate limit booking attempts (added in Level 5).
+- The API is fully functional through Level 5 according to the contract. When connecting frontend clients, secure server-side environments should hold the API key rather than exposing it in public client bundles.
