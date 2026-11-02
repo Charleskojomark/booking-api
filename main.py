@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from psycopg.errors import UniqueViolation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from db import get_connection
@@ -285,38 +286,41 @@ def create_booking(request: Request) -> JSONResponse:
 
     new_booking = NewBooking(slot_id=slot_id, name=name, email=email)
 
-    with get_connection() as conn, conn.transaction():
-        slot = conn.execute(
-            "SELECT id, starts_at FROM slots WHERE id = %s", (new_booking.slot_id,)
-        ).fetchone()
-        if not slot:
-            raise HTTPException(status_code=404, detail="slot not found")
+    try:
+        with get_connection() as conn, conn.transaction():
+            slot = conn.execute(
+                "SELECT id, starts_at FROM slots WHERE id = %s", (new_booking.slot_id,)
+            ).fetchone()
+            if not slot:
+                raise HTTPException(status_code=404, detail="slot not found")
 
-        slot_start = slot[1]
-        if slot_start.tzinfo is None:
-            slot_start = slot_start.replace(tzinfo=UTC)
-        else:
-            slot_start = slot_start.astimezone(UTC)
+            slot_start = slot[1]
+            if slot_start.tzinfo is None:
+                slot_start = slot_start.replace(tzinfo=UTC)
+            else:
+                slot_start = slot_start.astimezone(UTC)
 
-        now_utc = datetime.now(UTC)
-        if slot_start <= now_utc:
-            raise HTTPException(status_code=400, detail="slot has already started")
+            now_utc = datetime.now(UTC)
+            if slot_start <= now_utc:
+                raise HTTPException(status_code=400, detail="slot has already started")
 
-        booking_id = "bk_" + uuid.uuid4().hex[:12]
-        created_at_str = format_iso_ms(now_utc)
-        conn.execute(
-            """
-            INSERT INTO bookings (id, slot_id, name, email, status, created_at)
-            VALUES (%s, %s, %s, %s, 'confirmed', %s)
-            """,
-            (
-                booking_id,
-                new_booking.slot_id,
-                new_booking.name,
-                new_booking.email,
-                now_utc,
-            ),
-        )
+            booking_id = "bk_" + uuid.uuid4().hex[:12]
+            created_at_str = format_iso_ms(now_utc)
+            conn.execute(
+                """
+                INSERT INTO bookings (id, slot_id, name, email, status, created_at)
+                VALUES (%s, %s, %s, %s, 'confirmed', %s)
+                """,
+                (
+                    booking_id,
+                    new_booking.slot_id,
+                    new_booking.name,
+                    new_booking.email,
+                    now_utc,
+                ),
+            )
+    except UniqueViolation:
+        raise HTTPException(status_code=409, detail="slot already booked")
 
     booking = Booking(
         id=booking_id,
