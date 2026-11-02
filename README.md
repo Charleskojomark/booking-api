@@ -74,8 +74,18 @@ Retrieves booking details by id.
 - Response 200: `Booking`
 - Response 404: `{"error": "booking not found"}`
 
+### DELETE /bookings/{id}
+Sets status to cancelled and frees the slot.
+- Response 200: `Booking` (status `"cancelled"`)
+- Response 404: `{"error": "booking not found"}`
+- Response 409: `{"error": "booking already cancelled"}`
+
+## How Level 3 works
+
+Slot uniqueness is guaranteed in PostgreSQL using a partial unique index on `bookings(slot_id) WHERE status = 'confirmed'`. Concurrent booking attempts on the same slot trigger a database unique violation that is caught and translated to `409` conflict without error-prone check-then-insert application logic. Cancellations use a single atomic `UPDATE ... WHERE id = ... AND status = 'confirmed' RETURNING ...`, falling back to an ID lookup only when no row was updated to distinguish between `404` and `409`. This ensures concurrent cancellations of the same booking yield exactly one `200` and all others `409`.
+
 ## Known limitations
 
-- Level 2 does not yet prevent double booking of the same slot under concurrent requests (added in Level 3).
-- Level 2 does not yet provide idempotency keys for safely retrying booking requests (added in Level 4).
-- Level 2 does not yet rate limit booking attempts (added in Level 5).
+- Level 3 does not yet provide idempotency keys for safely retrying booking requests (added in Level 4).
+- Level 3 does not yet support paginating through a patient's bookings (added in Level 4).
+- Level 3 does not yet rate limit booking attempts (added in Level 5).
