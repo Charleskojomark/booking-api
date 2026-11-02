@@ -32,5 +32,14 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 CREATE INDEX IF NOT EXISTS idx_bookings_email_seq
     ON bookings (email, seq);
 
+CREATE TABLE IF NOT EXISTS booking_attempts (
+    email TEXT NOT NULL,
+    attempted_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_attempts_email_attempted_at
+    ON booking_attempts (email, attempted_at);
+
+
 
 
