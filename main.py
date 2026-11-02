@@ -358,3 +358,38 @@ def get_booking(id: str, request: Request) -> dict:
         created_at=format_iso_ms(row[5]),
     )
     return booking.model_dump()
+
+
+@app.delete("/bookings/{id}")
+def cancel_booking(id: str, request: Request) -> dict:
+    verify_api_key(request)
+
+    now_utc = datetime.now(UTC)
+    with get_connection() as conn, conn.transaction():
+        row = conn.execute(
+            """
+            UPDATE bookings
+            SET status = 'cancelled', cancelled_at = %s
+            WHERE id = %s AND status = 'confirmed'
+            RETURNING id, slot_id, name, email, status, created_at;
+            """,
+            (now_utc, id),
+        ).fetchone()
+
+        if not row:
+            existing = conn.execute(
+                "SELECT status FROM bookings WHERE id = %s", (id,)
+            ).fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="booking not found")
+            raise HTTPException(status_code=409, detail="booking already cancelled")
+
+    booking = Booking(
+        id=row[0],
+        slot_id=row[1],
+        name=row[2],
+        email=row[3],
+        status=row[4],
+        created_at=format_iso_ms(row[5]),
+    )
+    return booking.model_dump()
