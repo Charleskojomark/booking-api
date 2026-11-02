@@ -1,4 +1,9 @@
+import concurrent.futures
+import uuid
+
 import httpx
+
+from tests.conftest import API_KEY
 
 SAMPLE_SLOTS = [
     {
@@ -191,24 +196,27 @@ def test_endpoints_without_api_key_return_401(
         ("GET", "/slots", None),
         ("POST", "/bookings", {"slot_id": "s1", "name": "Ada", "email": "a@b.com"}),
         ("GET", "/bookings/bk_test", None),
+        ("DELETE", "/bookings/bk_test", None),
     ]
     for method, path, payload in endpoints:
         # Missing key
-        res = (
-            unauthed_client.post(path, json=payload)
-            if method == "POST"
-            else unauthed_client.get(path)
-        )
+        if method == "POST":
+            res = unauthed_client.post(path, json=payload)
+        elif method == "DELETE":
+            res = unauthed_client.delete(path)
+        else:
+            res = unauthed_client.get(path)
         assert res.status_code == 401
         assert res.json() == {"error": "unauthorized"}
 
         # Wrong key
         headers = {"X-API-Key": "wrong_key"}
-        res = (
-            unauthed_client.post(path, json=payload, headers=headers)
-            if method == "POST"
-            else unauthed_client.get(path, headers=headers)
-        )
+        if method == "POST":
+            res = unauthed_client.post(path, json=payload, headers=headers)
+        elif method == "DELETE":
+            res = unauthed_client.delete(path, headers=headers)
+        else:
+            res = unauthed_client.get(path, headers=headers)
         assert res.status_code == 401
         assert res.json() == {"error": "unauthorized"}
 
@@ -314,3 +322,140 @@ def test_response_schemas_strict_fields_and_types(client: httpx.Client) -> None:
     err_res = client.get("/bookings/nonexistent")
     assert set(err_res.json().keys()) == {"error"}
     assert isinstance(err_res.json()["error"], str)
+
+
+def test_second_booking_for_same_slot_returns_409(client: httpx.Client) -> None:
+    reset(client)
+    res1 = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+    )
+    assert res1.status_code == 201
+
+    res2 = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Bola Ahmed", "email": "bola@example.com"},
+    )
+    assert res2.status_code == 409
+    assert res2.json() == {"error": "slot already booked"}
+
+
+def test_concurrent_bookings_for_same_slot_gives_one_201_and_rest_409(
+    base_url: str,
+) -> None:
+    with httpx.Client(
+        base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+    ) as client:
+        reset(client)
+
+    def attempt_booking(idx: int) -> int:
+        with httpx.Client(
+            base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+        ) as c:
+            res = c.post(
+                "/bookings",
+                json={
+                    "slot_id": "s1",
+                    "name": f"User {idx}",
+                    "email": f"user_{idx}_{uuid.uuid4().hex[:6]}@example.com",
+                },
+            )
+            return res.status_code
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(attempt_booking, i) for i in range(8)]
+        status_codes = [f.result() for f in futures]
+
+    assert status_codes.count(201) == 1
+    assert status_codes.count(409) == 7
+
+
+def test_cancel_booking_frees_slot_and_returns_cancelled_booking(
+    client: httpx.Client,
+) -> None:
+    reset(client)
+    book_res = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+    )
+    booking_id = book_res.json()["id"]
+
+    # Slot is now unavailable
+    slots_res1 = client.get("/slots")
+    slots1 = {s["id"]: s for s in slots_res1.json()["slots"]}
+    assert slots1["s1"]["available"] is False
+
+    # Cancel booking
+    cancel_res = client.delete(f"/bookings/{booking_id}")
+    assert cancel_res.status_code == 200
+    cancelled_booking = cancel_res.json()
+    assert cancelled_booking["id"] == booking_id
+    assert cancelled_booking["status"] == "cancelled"
+    assert cancelled_booking["slot_id"] == "s1"
+    assert cancelled_booking["name"] == "Ada Obi"
+    assert cancelled_booking["email"] == "ada@example.com"
+    assert isinstance(cancelled_booking["created_at"], str)
+
+    # Slot s1 is now freed and available again
+    slots_res2 = client.get("/slots")
+    slots2 = {s["id"]: s for s in slots_res2.json()["slots"]}
+    assert slots2["s1"]["available"] is True
+
+    # Can now be booked again
+    rebook_res = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Bola Ahmed", "email": "bola@example.com"},
+    )
+    assert rebook_res.status_code == 201
+    assert rebook_res.json()["id"] != booking_id
+
+
+def test_cancel_nonexistent_booking_returns_404(client: httpx.Client) -> None:
+    reset(client)
+    res = client.delete("/bookings/bk_nonexistent")
+    assert res.status_code == 404
+    assert res.json() == {"error": "booking not found"}
+
+
+def test_cancel_already_cancelled_booking_returns_409(client: httpx.Client) -> None:
+    reset(client)
+    book_res = client.post(
+        "/bookings",
+        json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+    )
+    booking_id = book_res.json()["id"]
+
+    # First cancel -> 200
+    res1 = client.delete(f"/bookings/{booking_id}")
+    assert res1.status_code == 200
+
+    # Second cancel -> 409
+    res2 = client.delete(f"/bookings/{booking_id}")
+    assert res2.status_code == 409
+    assert res2.json() == {"error": "booking already cancelled"}
+
+
+def test_concurrent_cancels_gives_one_200_and_rest_409(base_url: str) -> None:
+    with httpx.Client(
+        base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+    ) as client:
+        reset(client)
+        book_res = client.post(
+            "/bookings",
+            json={"slot_id": "s1", "name": "Ada Obi", "email": "ada@example.com"},
+        )
+        booking_id = book_res.json()["id"]
+
+    def attempt_cancel() -> int:
+        with httpx.Client(
+            base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+        ) as c:
+            res = c.delete(f"/bookings/{booking_id}")
+            return res.status_code
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(attempt_cancel) for _ in range(8)]
+        status_codes = [f.result() for f in futures]
+
+    assert status_codes.count(200) == 1
+    assert status_codes.count(409) == 7
