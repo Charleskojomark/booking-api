@@ -23,6 +23,9 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+API_KEY = os.environ.get("API_KEY", "your_api_key_here")
+
+
 @pytest.fixture(scope="session")
 def base_url() -> Generator[str, None, None]:
     url = os.environ.get("BASE_URL")
@@ -39,12 +42,14 @@ def base_url() -> Generator[str, None, None]:
     server_url = f"http://127.0.0.1:{port}"
     for _ in range(50):
         try:
-            with httpx.Client(timeout=1.0) as probe_client:
-                res = probe_client.get(f"{server_url}/slots")
-                if res.status_code in (200, 401, 404):
+            with httpx.Client(timeout=3.0) as probe_client:
+                res = probe_client.get(
+                    f"{server_url}/slots", headers={"X-API-Key": API_KEY}
+                )
+                if res.status_code == 200:
                     break
         except (httpx.TransportError, httpx.HTTPError):
-            time.sleep(0.1)
+            time.sleep(0.2)
 
     yield server_url
     server.should_exit = True
@@ -53,5 +58,13 @@ def base_url() -> Generator[str, None, None]:
 
 @pytest.fixture
 def client(base_url: str) -> Generator[httpx.Client, None, None]:
-    with httpx.Client(base_url=base_url, timeout=10.0) as http_client:
+    with httpx.Client(
+        base_url=base_url, timeout=30.0, headers={"X-API-Key": API_KEY}
+    ) as http_client:
+        yield http_client
+
+
+@pytest.fixture
+def unauthed_client(base_url: str) -> Generator[httpx.Client, None, None]:
+    with httpx.Client(base_url=base_url, timeout=30.0) as http_client:
         yield http_client

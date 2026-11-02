@@ -183,6 +183,97 @@ def test_wrong_method_returns_405_error_schema(client: httpx.Client) -> None:
     assert res.json() == {"error": "method not allowed"}
 
 
+def test_endpoints_without_api_key_return_401(
+    unauthed_client: httpx.Client,
+) -> None:
+    endpoints = [
+        ("POST", "/reset", {"slots": []}),
+        ("GET", "/slots", None),
+        ("POST", "/bookings", {"slot_id": "s1", "name": "Ada", "email": "a@b.com"}),
+        ("GET", "/bookings/bk_test", None),
+    ]
+    for method, path, payload in endpoints:
+        # Missing key
+        res = (
+            unauthed_client.post(path, json=payload)
+            if method == "POST"
+            else unauthed_client.get(path)
+        )
+        assert res.status_code == 401
+        assert res.json() == {"error": "unauthorized"}
+
+        # Wrong key
+        headers = {"X-API-Key": "wrong_key"}
+        res = (
+            unauthed_client.post(path, json=payload, headers=headers)
+            if method == "POST"
+            else unauthed_client.get(path, headers=headers)
+        )
+        assert res.status_code == 401
+        assert res.json() == {"error": "unauthorized"}
+
+
+def test_booking_with_invalid_email_format_returns_400(client: httpx.Client) -> None:
+    reset(client)
+    invalid_emails = [
+        "notanemail",
+        "missingatsign.com",
+        "two@@signs.com",
+        "@nodomain.com",
+        "missingdomain@.com",
+        "spaces in@domain.com",
+        "domain@no dot",
+    ]
+    for bad_email in invalid_emails:
+        res = client.post(
+            "/bookings",
+            json={"slot_id": "s1", "name": "Ada Obi", "email": bad_email},
+        )
+        assert res.status_code == 400
+        assert "error" in res.json()
+
+
+def test_booking_slot_already_started_returns_400(client: httpx.Client) -> None:
+    # Load a slot in the past
+    past_slots = [
+        {
+            "id": "past_1",
+            "provider": "Dr Ade",
+            "start": "2020-01-01T09:00:00Z",
+            "end": "2020-01-01T09:30:00Z",
+        }
+    ]
+    reset(client, slots=past_slots)
+    res = client.post(
+        "/bookings",
+        json={"slot_id": "past_1", "name": "Ada Obi", "email": "ada@example.com"},
+    )
+    assert res.status_code == 400
+    assert res.json() == {"error": "slot has already started"}
+
+
+def test_booking_trims_name_and_stores_email_lowercase(client: httpx.Client) -> None:
+    reset(client)
+    res = client.post(
+        "/bookings",
+        json={
+            "slot_id": "s1",
+            "name": "   Ada Obi   ",
+            "email": "   ADA@EXAMPLE.COM   ",
+        },
+    )
+    assert res.status_code == 201
+    booking = res.json()
+    assert booking["name"] == "Ada Obi"
+    assert booking["email"] == "ada@example.com"
+
+    # Verify retrieved booking also has trimmed name and lowercased email
+    get_res = client.get(f"/bookings/{booking['id']}")
+    assert get_res.status_code == 200
+    assert get_res.json()["name"] == "Ada Obi"
+    assert get_res.json()["email"] == "ada@example.com"
+
+
 def test_response_schemas_strict_fields_and_types(client: httpx.Client) -> None:
     reset_res = reset(client)
     assert set(reset_res.json().keys()) == {"ok"}
