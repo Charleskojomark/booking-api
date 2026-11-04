@@ -128,7 +128,7 @@ export default function HomePage() {
         throw new Error(data?.error || "Booking failed");
       }
 
-      setConfirmedBooking(data.booking);
+      setConfirmedBooking(data.booking || data);
       fetchSlots();
     } catch (err: any) {
       setSubmitError(err.message);
@@ -152,14 +152,15 @@ export default function HomePage() {
 
       alert("Appointment cancelled successfully. The slot is now available again.");
 
+      const updated = data.booking || data;
       if (confirmedBooking && confirmedBooking.id === bookingId) {
-        setConfirmedBooking(data.booking);
+        setConfirmedBooking(updated);
       }
       setUserBookings((prev) =>
-        prev.map((b) => (b.id === bookingId ? data.booking : b))
+        prev.map((b) => (b.id === bookingId ? updated : b))
       );
       if (singleBooking && singleBooking.id === bookingId) {
-        setSingleBooking(data.booking);
+        setSingleBooking(updated);
       }
       fetchSlots();
     } catch (err: any) {
@@ -213,6 +214,7 @@ export default function HomePage() {
     setUserBookings([]);
     setLookupError(null);
     setSearchedEmail(null);
+    setLookupLoading(true);
 
     try {
       const res = await fetch(`/api/bookings/${bookingIdSearch.trim()}`);
@@ -220,12 +222,14 @@ export default function HomePage() {
       if (!res.ok) {
         throw new Error(data?.error || "Booking not found");
       }
-      setSingleBooking(data.booking);
+      setSingleBooking(data.booking || data);
       setTimeout(() => {
         resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 50);
     } catch (err: any) {
       setSingleBookingError(err.message);
+    } finally {
+      setLookupLoading(false);
     }
   }
 
