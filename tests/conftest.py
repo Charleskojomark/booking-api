@@ -72,3 +72,26 @@ def client(base_url: str) -> Generator[httpx.Client, None, None]:
 def unauthed_client(base_url: str) -> Generator[httpx.Client, None, None]:
     with httpx.Client(base_url=base_url, timeout=30.0) as http_client:
         yield http_client
+
+
+@pytest.fixture(scope="session", autouse=True)
+def restore_database_after_tests() -> Generator[None, None, None]:
+    yield
+    # Automatically restore full 4-provider schedule after test suite finishes
+    sample_file = Path(root_dir) / "sample_slots.json"
+    if sample_file.exists():
+        import json
+        with open(sample_file, "r") as f:
+            data = json.load(f)
+        from db import get_connection
+        with get_connection() as conn, conn.transaction():
+            conn.execute("DELETE FROM bookings")
+            conn.execute("DELETE FROM idempotency_keys")
+            conn.execute("DELETE FROM booking_attempts")
+            conn.execute("DELETE FROM slots")
+            for slot in data["slots"]:
+                conn.execute(
+                    "INSERT INTO slots (id, provider, starts_at, ends_at) VALUES (%s, %s, %s, %s)",
+                    (slot["id"], slot["provider"], slot["start"], slot["end"]),
+                )
+
