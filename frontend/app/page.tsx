@@ -52,6 +52,21 @@ export default function HomePage() {
   const [singleBookingError, setSingleBookingError] = useState<string | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
+  // In-app cancel modal & notification banner state
+  const [cancelTargetId, setCancelTargetId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [notification, setNotification] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const showNotification = (type: "success" | "error", message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => {
+      setNotification((curr) => (curr?.message === message ? null : curr));
+    }, 4500);
+  };
+
   useEffect(() => {
     fetchSlots();
   }, [selectedProvider]);
@@ -137,8 +152,10 @@ export default function HomePage() {
     }
   }
 
-  async function handleCancelBooking(bookingId: string) {
-    if (!confirm("Are you sure you want to cancel this appointment?")) return;
+  async function executeCancelBooking() {
+    if (!cancelTargetId) return;
+    const bookingId = cancelTargetId;
+    setIsCancelling(true);
 
     try {
       const res = await fetch(`/api/bookings/${bookingId}`, {
@@ -146,11 +163,14 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data?.error || "Failed to cancel booking");
+        showNotification("error", data?.error || "Failed to cancel booking");
         return;
       }
 
-      alert("Appointment cancelled successfully. The slot is now available again.");
+      showNotification(
+        "success",
+        "Appointment cancelled successfully. The slot is now available again."
+      );
 
       const updated = data.booking || data;
       if (confirmedBooking && confirmedBooking.id === bookingId) {
@@ -164,7 +184,10 @@ export default function HomePage() {
       }
       fetchSlots();
     } catch (err: any) {
-      alert(err.message);
+      showNotification("error", err?.message || "Failed to cancel booking");
+    } finally {
+      setIsCancelling(false);
+      setCancelTargetId(null);
     }
   }
 
@@ -298,7 +321,30 @@ export default function HomePage() {
       </header>
 
       {/* Main Container */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 flex-1 w-full">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 flex-1 w-full space-y-4">
+        {notification && (
+          <div
+            className={`p-3.5 rounded-xl text-xs font-medium border flex items-center justify-between transition-all ${
+              notification.type === "success"
+                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                : "bg-red-50 text-red-800 border-red-200"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">
+                {notification.type === "success" ? "Success:" : "Notice:"}
+              </span>
+              <span>{notification.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNotification(null)}
+              className="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-0.5 rounded transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {activeTab === "book" && (
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             {/* Left: Available Slots */}
@@ -512,7 +558,12 @@ export default function HomePage() {
                     {confirmedBooking.status === "confirmed" ? (
                       <div className="space-y-2 pt-1">
                         <button
-                          onClick={() => handleCancelBooking(confirmedBooking.id)}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setCancelTargetId(confirmedBooking.id);
+                          }}
                           className="w-full bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 py-2 rounded-lg text-xs font-medium transition-colors"
                         >
                           Cancel Appointment
@@ -800,7 +851,12 @@ export default function HomePage() {
 
                   {singleBooking.status === "confirmed" && (
                     <button
-                      onClick={() => handleCancelBooking(singleBooking.id)}
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setCancelTargetId(singleBooking.id);
+                      }}
                       className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs px-3 py-1.5 rounded transition-colors"
                     >
                       Cancel Booking
@@ -849,7 +905,12 @@ export default function HomePage() {
                         {b.status === "confirmed" && (
                           <div className="pt-1">
                             <button
-                              onClick={() => handleCancelBooking(b.id)}
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setCancelTargetId(b.id);
+                              }}
                               className="w-full text-xs bg-red-50 hover:bg-red-100 text-red-700 py-1.5 rounded border border-red-100 font-medium transition-colors"
                             >
                               Cancel Booking
@@ -896,7 +957,12 @@ export default function HomePage() {
                             <td className="py-2.5 px-2 text-right">
                               {b.status === "confirmed" ? (
                                 <button
-                                  onClick={() => handleCancelBooking(b.id)}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setCancelTargetId(b.id);
+                                  }}
                                   className="text-xs bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded transition-colors"
                                 >
                                   Cancel
@@ -924,6 +990,50 @@ export default function HomePage() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+        {/* In-app Cancellation Confirmation Dialog */}
+        {cancelTargetId && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !isCancelling) {
+                setCancelTargetId(null);
+              }
+            }}
+          >
+            <div className="bg-white rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4 border border-slate-200">
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Cancel Appointment
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Are you sure you want to cancel booking{" "}
+                  <span className="font-mono font-medium text-slate-900">
+                    {cancelTargetId}
+                  </span>
+                  ? This will release the slot so other patients can book it.
+                </p>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isCancelling}
+                  onClick={() => setCancelTargetId(null)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-lg text-xs font-medium transition-colors"
+                >
+                  Keep Booking
+                </button>
+                <button
+                  type="button"
+                  disabled={isCancelling}
+                  onClick={executeCancelBooking}
+                  className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-medium transition-colors"
+                >
+                  {isCancelling ? "Cancelling..." : "Confirm Cancel"}
+                </button>
+              </div>
             </div>
           </div>
         )}
